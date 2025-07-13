@@ -61,7 +61,8 @@ const StaffDashboard: React.FC = () => {
   }, []);
 
   const setupRealtimeSubscription = () => {
-    // Subscribe to real-time changes on menu_items table
+    console.log('Setting up real-time subscription for staff dashboard');
+    
     const channel = supabase
       .channel('staff_menu_items_changes')
       .on(
@@ -73,11 +74,11 @@ const StaffDashboard: React.FC = () => {
         },
         (payload) => {
           console.log('Menu item updated in staff dashboard:', payload);
-          // Update the specific menu item in state
+          // Update the specific menu item in state with new data
           setMenuItems(prev => 
             prev.map(item => 
               item.id === payload.new.id 
-                ? { ...item, ...payload.new }
+                ? { ...item, ...payload.new as MenuItem }
                 : item
             )
           );
@@ -92,7 +93,6 @@ const StaffDashboard: React.FC = () => {
         },
         (payload) => {
           console.log('New order received:', payload);
-          // Refresh orders when new order is placed
           fetchOrders();
         }
       )
@@ -105,11 +105,10 @@ const StaffDashboard: React.FC = () => {
         },
         (payload) => {
           console.log('Order updated:', payload);
-          // Update the specific order in state
           setOrders(prev => 
             prev.map(order => 
               order.id === payload.new.id 
-                ? { ...order, ...payload.new }
+                ? { ...order, ...payload.new as Order }
                 : order
             )
           );
@@ -117,6 +116,7 @@ const StaffDashboard: React.FC = () => {
       )
       .subscribe();
     
+    console.log('Real-time subscription established');
     setRealtimeChannel(channel);
   };
 

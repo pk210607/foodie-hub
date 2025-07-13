@@ -180,70 +180,91 @@ const StudentDashboard: React.FC = () => {
     }
 
     try {
-      // Use the database function for atomic cart addition with quantity update
+      console.log('Adding to cart:', menuItem.name, 'Current quantity:', menuItem.quantity_available);
+      
       const { data, error } = await supabase.rpc('add_to_cart_with_quantity_update', {
         p_user_id: user?.id,
         p_menu_item_id: menuItem.id,
         p_quantity: 1
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database function error:', error);
+        throw error;
+      }
+      
+      console.log('Database function response:', data);
       
       if (!data.success) {
         throw new Error(data.error || 'Failed to add item to cart');
       }
 
-      // Refresh cart items to reflect changes
+      // Refresh both cart items and menu items to reflect changes
       await fetchCartItems();
+      await fetchMenuItems();
       showToast('Item added to cart', 'success');
     } catch (error) {
       console.error('Error adding to cart:', error);
-      showToast(error.message || 'Failed to add item to cart', 'error');
+      showToast(error?.message || 'Failed to add item to cart', 'error');
     }
   };
 
   const updateCartQuantity = async (cartItemId: string, newQuantity: number) => {
     try {
-      // Use the database function for atomic quantity update
+      console.log('Updating cart quantity:', cartItemId, 'New quantity:', newQuantity);
+      
       const { data, error } = await supabase.rpc('update_cart_quantity_with_menu_sync', {
         p_cart_item_id: cartItemId,
         p_new_quantity: newQuantity
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database function error:', error);
+        throw error;
+      }
+      
+      console.log('Database function response:', data);
       
       if (!data.success) {
         throw new Error(data.error || 'Failed to update quantity');
       }
 
-      // Refresh cart items to reflect changes
+      // Refresh both cart items and menu items to reflect changes
       await fetchCartItems();
+      await fetchMenuItems();
       showToast('Cart updated successfully', 'success');
     } catch (error) {
       console.error('Error updating cart quantity:', error);
-      showToast(error.message || 'Failed to update quantity', 'error');
+      showToast(error?.message || 'Failed to update quantity', 'error');
     }
   };
 
   const removeFromCart = async (cartItemId: string) => {
     try {
-      // Use the database function for atomic cart removal with quantity restoration
+      console.log('Removing from cart:', cartItemId);
+      
       const { data, error } = await supabase.rpc('remove_from_cart_with_quantity_restore', {
         p_cart_item_id: cartItemId
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database function error:', error);
+        throw error;
+      }
+      
+      console.log('Database function response:', data);
       
       if (!data.success) {
         throw new Error(data.error || 'Failed to remove item');
       }
 
-      // Refresh cart items to reflect changes
+      // Refresh both cart items and menu items to reflect changes
       await fetchCartItems();
+      await fetchMenuItems();
       showToast('Item removed from cart', 'success');
     } catch (error) {
       console.error('Error removing from cart:', error);
-      showToast(error.message || 'Failed to remove item', 'error');
+      showToast(error?.message || 'Failed to remove item', 'error');
     }
   };
 
