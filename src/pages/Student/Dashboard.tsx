@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import { useTheme } from '../../contexts/ThemeContext';
 import { 
   ShoppingCart, 
@@ -69,6 +70,7 @@ const StudentDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [realtimeChannel, setRealtimeChannel] = useState<RealtimeChannel | null>(null);
 
   const categories = ['all', 'breakfast', 'lunch', 'dinner', 'snacks', 'beverages', 'desserts'];
 
@@ -76,7 +78,42 @@ const StudentDashboard: React.FC = () => {
     fetchMenuItems();
     fetchCartItems();
     fetchOrders();
+    setupRealtimeSubscription();
+    
+    return () => {
+      if (realtimeChannel) {
+        realtimeChannel.unsubscribe();
+      }
+    };
   }, []);
+
+  const setupRealtimeSubscription = () => {
+    // Subscribe to real-time changes on menu_items table
+    const channel = supabase
+      .channel('menu_items_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'menu_items'
+        },
+        (payload) => {
+          console.log('Menu item updated:', payload);
+          // Update the specific menu item in state
+          setMenuItems(prev => 
+            prev.map(item => 
+              item.id === payload.new.id 
+                ? { ...item, ...payload.new }
+                : item
+            )
+          );
+        }
+      )
+      .subscribe();
+    
+    setRealtimeChannel(channel);
+  };
 
   const fetchMenuItems = async () => {
     try {
@@ -137,167 +174,76 @@ const StudentDashboard: React.FC = () => {
   };
 
   const addToCart = async (menuItem: MenuItem) => {
-    // Check if item is available
     if (menuItem.quantity_available <= 0) {
       showToast('Item is out of stock', 'error');
       return;
     }
 
     try {
-      const existingItem = cartItems.find(item => item.menu_item_id === menuItem.id);
+      // Use the database function for atomic cart addition with quantity update
+      const { data, error } = await supabase.rpc('add_to_cart_with_quantity_update', {
+        p_user_id: user?.id,
+        p_menu_item_id: menuItem.id,
+        p_quantity: 1
+      });
 
-      if (existingItem) {
-        // Update cart quantity and reduce menu item stock
-        const { error: cartError } = await supabase
-          .from('cart_items')
-          .update({ quantity: existingItem.quantity + 1 })
-          .eq('id', existingItem.id);
-
-        if (cartError) throw cartError;
-
-        // Immediately reduce the menu item quantity in database
-        const { error: menuError } = await supabase
-          .from('menu_items')
-          .update({ quantity_available: menuItem.quantity_available - 1 })
-          .eq('id', menuItem.id);
-
-        if (menuError) throw menuError;
-      } else {
-        // Insert new cart item and reduce menu item stock
-        const { error: insertError } = await supabase
-          .from('cart_items')
-          .insert({
-            user_id: user?.id,
-            menu_item_id: menuItem.id,
-            quantity: 1
-          });
-
-        if (insertError) throw insertError;
-
-        // Immediately reduce the menu item quantity in database
-        const { error: menuError } = await supabase
-          .from('menu_items')
-          .update({ quantity_available: menuItem.quantity_available - 1 })
-          .eq('id', menuItem.id);
-
-        if (menuError) throw menuError;
+      if (error) throw error;
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to add item to cart');
       }
 
-      // Refresh both cart and menu items to reflect changes
+      // Refresh cart items to reflect changes
       await fetchCartItems();
-      await fetchMenuItems();
       showToast('Item added to cart', 'success');
     } catch (error) {
       console.error('Error adding to cart:', error);
-      showToast('Failed to add item to cart', 'error');
+      showToast(error.message || 'Failed to add item to cart', 'error');
     }
   };
 
   const updateCartQuantity = async (cartItemId: string, newQuantity: number) => {
-    if (newQuantity <= 0) {
-      await removeFromCart(cartItemId);
-      return;
-    }
-
-    const cartItem = cartItems.find(item => item.id === cartItemId);
-    if (!cartItem) {
-      showToast('Cart item not found', 'error');
-      return;
-    }
-
-    // Get current menu item data from database to ensure accuracy
-    const { data: currentMenuItem, error: fetchError } = await supabase
-      .from('menu_items')
-      .select('*')
-      .eq('id', cartItem.menu_item_id)
-      .single();
-
-    if (fetchError || !currentMenuItem) {
-      showToast('Menu item not found', 'error');
-      return;
-    }
-
-    const quantityDifference = newQuantity - cartItem.quantity;
-    
-    // Check if we're trying to add more items than available
-    if (quantityDifference > 0 && quantityDifference > currentMenuItem.quantity_available) {
-      showToast(`Only ${currentMenuItem.quantity_available} more items available`, 'error');
-      return;
-    }
-
     try {
-      // Update cart quantity
-      const { error: cartError } = await supabase
-        .from('cart_items')
-        .update({ quantity: newQuantity })
-        .eq('id', cartItemId);
+      // Use the database function for atomic quantity update
+      const { data, error } = await supabase.rpc('update_cart_quantity_with_menu_sync', {
+        p_cart_item_id: cartItemId,
+        p_new_quantity: newQuantity
+      });
 
-      if (cartError) throw cartError;
+      if (error) throw error;
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to update quantity');
+      }
 
-      // Update menu item quantity in database based on the difference
-      const newMenuQuantity = currentMenuItem.quantity_available - quantityDifference;
-      const { error: menuError } = await supabase
-        .from('menu_items')
-        .update({ quantity_available: Math.max(0, newMenuQuantity) })
-        .eq('id', currentMenuItem.id);
-
-      if (menuError) throw menuError;
-
-      // Refresh both cart and menu items to reflect changes
+      // Refresh cart items to reflect changes
       await fetchCartItems();
-      await fetchMenuItems();
       showToast('Cart updated successfully', 'success');
     } catch (error) {
       console.error('Error updating cart quantity:', error);
-      showToast('Failed to update quantity', 'error');
+      showToast(error.message || 'Failed to update quantity', 'error');
     }
   };
 
   const removeFromCart = async (cartItemId: string) => {
-    const cartItem = cartItems.find(item => item.id === cartItemId);
-    if (!cartItem) {
-      showToast('Cart item not found', 'error');
-      return;
-    }
-
     try {
-      // Get current menu item data from database
-      const { data: currentMenuItem, error: fetchError } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('id', cartItem.menu_item_id)
-        .single();
-
-      if (fetchError || !currentMenuItem) {
-        showToast('Menu item not found', 'error');
-        return;
-      }
-
-      // Remove from cart
-      const { error } = await supabase
-        .from('cart_items')
-        .delete()
-        .eq('id', cartItemId);
+      // Use the database function for atomic cart removal with quantity restoration
+      const { data, error } = await supabase.rpc('remove_from_cart_with_quantity_restore', {
+        p_cart_item_id: cartItemId
+      });
 
       if (error) throw error;
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to remove item');
+      }
 
-      // Return the quantity back to menu item in database
-      const { error: menuError } = await supabase
-        .from('menu_items')
-        .update({ 
-          quantity_available: currentMenuItem.quantity_available + cartItem.quantity 
-        })
-        .eq('id', cartItem.menu_item_id);
-
-      if (menuError) throw menuError;
-
-      // Refresh both cart and menu items to reflect changes
+      // Refresh cart items to reflect changes
       await fetchCartItems();
-      await fetchMenuItems();
       showToast('Item removed from cart', 'success');
     } catch (error) {
       console.error('Error removing from cart:', error);
-      showToast('Failed to remove item', 'error');
+      showToast(error.message || 'Failed to remove item', 'error');
     }
   };
 
@@ -353,7 +299,6 @@ const StudentDashboard: React.FC = () => {
       // Refresh all data to reflect changes
       await fetchCartItems();
       await fetchOrders();
-      await fetchMenuItems();
       setActiveTab('orders');
       showToast('Order placed successfully!', 'success');
     } catch (error) {

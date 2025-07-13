@@ -6,6 +6,7 @@ import ThemeToggle from '../../components/Common/ThemeToggle';
 import { MenuItem, Order } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 interface ToastMessage {
   id: string;
@@ -25,6 +26,7 @@ const StaffDashboard: React.FC = () => {
   const [savingMenuItem, setSavingMenuItem] = useState(false);
   const [deletingMenuItem, setDeletingMenuItem] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [realtimeChannel, setRealtimeChannel] = useState<RealtimeChannel | null>(null);
 
   const [editForm, setEditForm] = useState({
     name: '',
@@ -49,7 +51,74 @@ const StaffDashboard: React.FC = () => {
   useEffect(() => {
     fetchOrders();
     fetchMenuItems();
+    setupRealtimeSubscription();
+    
+    return () => {
+      if (realtimeChannel) {
+        realtimeChannel.unsubscribe();
+      }
+    };
   }, []);
+
+  const setupRealtimeSubscription = () => {
+    // Subscribe to real-time changes on menu_items table
+    const channel = supabase
+      .channel('staff_menu_items_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'menu_items'
+        },
+        (payload) => {
+          console.log('Menu item updated in staff dashboard:', payload);
+          // Update the specific menu item in state
+          setMenuItems(prev => 
+            prev.map(item => 
+              item.id === payload.new.id 
+                ? { ...item, ...payload.new }
+                : item
+            )
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'orders'
+        },
+        (payload) => {
+          console.log('New order received:', payload);
+          // Refresh orders when new order is placed
+          fetchOrders();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'orders'
+        },
+        (payload) => {
+          console.log('Order updated:', payload);
+          // Update the specific order in state
+          setOrders(prev => 
+            prev.map(order => 
+              order.id === payload.new.id 
+                ? { ...order, ...payload.new }
+                : order
+            )
+          );
+        }
+      )
+      .subscribe();
+    
+    setRealtimeChannel(channel);
+  };
 
   useEffect(() => {
     if (editingItem) {

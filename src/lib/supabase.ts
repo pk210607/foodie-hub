@@ -7,7 +7,12 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
 // Create client even with placeholder values to prevent errors
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
-    persistSession: false, // Disable session persistence when using placeholder values
+    persistSession: !supabaseUrl.includes('placeholder'), // Only persist session when properly configured
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10
+    }
   }
 });
 
